@@ -20,7 +20,9 @@
 ## Intro
 来自于https://github.com/zekroTJA/timedmap。
 
-废弃了原先使用map[keyWrap]*element。并且使用RWMutex进行数据同步的方案，采用了sync.Map来进行存储。不知为何，在我的环境里，如果超时时长较长的情况下，RWMutex会死锁。
+废弃了原先使用map[keyWrap]*element，并且使用RWMutex进行数据同步的方案，采用了sync.Map来进行存储。
+不知为何，在我的环境里，如果超时时长较长的情况下，RWMutex会死锁。
+
 另外在超时回收函数里，对回调函数指针进行了检查，避免错误使用录入了空指针的异常。
 
 This package allows to set values to a map which will expire and disappear after a specified time.
