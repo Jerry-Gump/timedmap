@@ -11,8 +11,7 @@ type callback func(value interface{})
 // and a timer, which cleans the map in the set
 // tick durations from expired keys.
 type TimedMap struct {
-	mtx         sync.RWMutex
-	container   map[keyWrap]*element
+	container   sync.Map
 	elementPool *sync.Pool
 
 	cleanupTickTime time.Duration
@@ -54,7 +53,6 @@ type element struct {
 // the cleanup loop when already running if you want to.
 func New(cleanupTickTime time.Duration, tickerChan ...<-chan time.Time) *TimedMap {
 	tm := &TimedMap{
-		container:       make(map[keyWrap]*element),
 		cleanerStopChan: make(chan bool),
 		elementPool: &sync.Pool{
 			New: func() interface{} {
@@ -66,6 +64,7 @@ func New(cleanupTickTime time.Duration, tickerChan ...<-chan time.Time) *TimedMa
 	if len(tickerChan) > 0 {
 		tm.StartCleanerExternal(tickerChan[0])
 	} else if cleanupTickTime > 0 {
+		tm.cleanupTickTime = cleanupTickTime
 		tm.StartCleanerInternal(cleanupTickTime)
 	}
 
@@ -152,19 +151,22 @@ func (tm *TimedMap) Refresh(key interface{}, d time.Duration) error {
 
 // Flush deletes all key-value pairs of the map.
 func (tm *TimedMap) Flush() {
-	tm.mtx.Lock()
-	defer tm.mtx.Unlock()
-
-	for k, v := range tm.container {
-		tm.elementPool.Put(v)
-		delete(tm.container, k)
-	}
+	tm.container.Range(func(key, value interface{}) bool {
+		tm.elementPool.Put(value)
+		tm.container.Delete(key)
+		return true
+	})
 }
 
 // Size returns the current number of key-value pairs
 // existent in the map.
 func (tm *TimedMap) Size() int {
-	return len(tm.container)
+	l := 0
+	tm.container.Range(func(key, value interface{}) bool {
+		l++
+		return true
+	})
+	return l
 }
 
 // StartCleanerInternal starts the cleanup loop controlled
@@ -236,6 +238,9 @@ func (tm *TimedMap) cleanupLoop(tc <-chan time.Time) {
 // from the map and executes all defined callback functions
 func (tm *TimedMap) expireElement(key interface{}, sec int, v *element) {
 	for _, cb := range v.cbs {
+		if cb == nil {
+			continue
+		}
 		cb(v.value)
 	}
 
@@ -245,7 +250,7 @@ func (tm *TimedMap) expireElement(key interface{}, sec int, v *element) {
 	}
 
 	tm.elementPool.Put(v)
-	delete(tm.container, k)
+	tm.container.Delete(k)
 }
 
 // cleanUp iterates trhough the map and expires all key-value
@@ -253,14 +258,14 @@ func (tm *TimedMap) expireElement(key interface{}, sec int, v *element) {
 func (tm *TimedMap) cleanUp() {
 	now := time.Now()
 
-	tm.mtx.Lock()
-	defer tm.mtx.Unlock()
-
-	for k, v := range tm.container {
+	tm.container.Range(func(key, value any) bool {
+		v := value.(*element)
 		if now.After(v.expires) {
+			k := key.(keyWrap)
 			tm.expireElement(k.key, k.sec, v)
 		}
-	}
+		return true
+	})
 }
 
 // set sets the value for a key and section with the
@@ -270,7 +275,9 @@ func (tm *TimedMap) set(key interface{}, sec int, val interface{}, expiresAfter 
 	if v := tm.getRaw(key, sec); v != nil {
 		v.value = val
 		v.expires = time.Now().Add(expiresAfter)
-		v.cbs = cb
+		if cb != nil {
+			v.cbs = cb
+		}
 		return
 	}
 
@@ -279,28 +286,24 @@ func (tm *TimedMap) set(key interface{}, sec int, val interface{}, expiresAfter 
 		key: key,
 	}
 
-	tm.mtx.Lock()
-	defer tm.mtx.Unlock()
-
 	v := tm.elementPool.Get().(*element)
 	v.value = val
 	v.expires = time.Now().Add(expiresAfter)
-	v.cbs = cb
-	tm.container[k] = v
+	if cb != nil {
+		v.cbs = cb
+	}
+	tm.container.Store(k, v)
 }
 
 // get returns an element object by key and section
 // if the value has not already expired
 func (tm *TimedMap) get(key interface{}, sec int) *element {
 	v := tm.getRaw(key, sec)
-
 	if v == nil {
 		return nil
 	}
 
 	if time.Now().After(v.expires) {
-		tm.mtx.Lock()
-		defer tm.mtx.Unlock()
 		tm.expireElement(key, sec, v)
 		return nil
 	}
@@ -315,16 +318,12 @@ func (tm *TimedMap) getRaw(key interface{}, sec int) *element {
 		sec: sec,
 		key: key,
 	}
-
-	tm.mtx.RLock()
-	v, ok := tm.container[k]
-	tm.mtx.RUnlock()
-
+	v, ok := tm.container.Load(k)
 	if !ok {
 		return nil
 	}
 
-	return v
+	return v.(*element)
 }
 
 // remove removes an element from the map by giveb
@@ -335,16 +334,13 @@ func (tm *TimedMap) remove(key interface{}, sec int) {
 		key: key,
 	}
 
-	tm.mtx.Lock()
-	defer tm.mtx.Unlock()
-
-	v, ok := tm.container[k]
+	v, ok := tm.container.Load(k)
 	if !ok {
 		return
 	}
 
 	tm.elementPool.Put(v)
-	delete(tm.container, k)
+	tm.container.Delete(k)
 }
 
 // refresh extends the lifetime of the given key in the
@@ -371,15 +367,14 @@ func (tm *TimedMap) setExpires(key interface{}, sec int, d time.Duration) error 
 
 func (tm *TimedMap) getSnapshot(sec int) (m map[interface{}]interface{}) {
 	m = make(map[interface{}]interface{})
-
-	tm.mtx.RLock()
-	defer tm.mtx.RUnlock()
-
-	for k, v := range tm.container {
+	tm.container.Range(func(key, value any) bool {
+		k := key.(keyWrap)
 		if k.sec == sec {
+			v := value.(*element)
 			m[k.key] = v.value
 		}
-	}
+		return true
+	})
 
 	return
 }

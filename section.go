@@ -115,19 +115,23 @@ func (s *section) Refresh(key interface{}, d time.Duration) error {
 }
 
 func (s *section) Flush() {
-	for k := range s.tm.container {
+	s.tm.container.Range(func(key, value any) bool {
+		k := key.(keyWrap)
 		if k.sec == s.sec {
 			s.tm.remove(k.key, k.sec)
 		}
-	}
+		return true
+	})
 }
 
 func (s *section) Size() (i int) {
-	for k := range s.tm.container {
+	s.tm.container.Range(func(key, value any) bool {
+		k := key.(keyWrap)
 		if k.sec == s.sec {
 			i++
 		}
-	}
+		return true
+	})
 	return
 }
 

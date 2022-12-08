@@ -20,13 +20,13 @@ func TestSectionFlush(t *testing.T) {
 		tm.set(i, 2, 1, time.Hour)
 	}
 	tm.Section(2).Flush()
-	assert.EqualValues(t, 15, len(tm.container))
+	assert.EqualValues(t, 15, tm.Size())
 
 	tm.Section(1).Flush()
-	assert.EqualValues(t, 5, len(tm.container))
+	assert.EqualValues(t, 5, tm.Size())
 
 	tm.Section(0).Flush()
-	assert.EqualValues(t, 0, len(tm.container))
+	assert.EqualValues(t, 0, tm.Size())
 }
 
 func TestSectionIdent(t *testing.T) {

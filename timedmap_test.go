@@ -17,7 +17,7 @@ func TestNew(t *testing.T) {
 	tm := New(dCleanupTick)
 
 	assert.NotNil(t, tm)
-	assert.EqualValues(t, 0, len(tm.container))
+	assert.EqualValues(t, 0, tm.Size())
 	time.Sleep(10 * time.Millisecond)
 	assert.True(t, tm.cleanerRunning)
 }
@@ -28,9 +28,10 @@ func TestFlush(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		tm.set(i, 0, 1, time.Hour)
 	}
-	assert.EqualValues(t, 10, len(tm.container))
+
+	assert.EqualValues(t, 10, tm.Size())
 	tm.Flush()
-	assert.EqualValues(t, 0, len(tm.container))
+	assert.EqualValues(t, 0, tm.Size())
 }
 
 func TestIdent(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/zekroTJA/timedmap"
+	"github.com/Jerry-Gump/timedmap"
 )
 
 type myData struct {
