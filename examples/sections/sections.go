@@ -1,3 +1,11 @@
+/*
+ * @Date: 2022-10-28 16:46:35
+ * @LastEditors: Jerry Gump gongzengli@qq.com
+ * @LastEditTime: 2023-01-10 10:39:38
+ * @FilePath: e:\VSCode-Project\legalsoft.com.cn\timedmap\examples\sections\sections.go
+ * @Description:
+ * Copyright (c) 2023 by Jerry Gump email: gongzengli@qq.com, All Rights Reserved.
+ */
 package main
 
 import (
@@ -16,7 +24,7 @@ func main() {
 
 	// Creates a new timed map which scans for
 	// expired keys every 1 second
-	tm := timedmap.New(1 * time.Second)
+	tm := timedmap.New[any](1 * time.Second)
 
 	// Get sections 0 and 1
 	sec0 := tm.Section(0)
@@ -55,7 +63,7 @@ func main() {
 	printKeyVal(sec1, "ho")
 }
 
-func printKeyVal(s timedmap.Section, key interface{}) {
+func printKeyVal(s timedmap.Section[any], key interface{}) {
 	d := s.GetValue(key)
 	if d == nil {
 		log.Printf(
