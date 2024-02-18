@@ -1,7 +1,7 @@
 /*
  * @Date: 2023-11-03 11:41:53
  * @LastEditors: Jerry Gump gongzengli@qq.com
- * @LastEditTime: 2023-11-03 12:08:15
+ * @LastEditTime: 2023-11-03 15:21:06
  * @FilePath: e:\VSCode-Project\legalsoft.com.cn\timedmap\timedlist.go
  * @Description:
  * Copyright (c) 2023 by ${git_name} email: ${git_email}, All Rights Reserved.
@@ -21,6 +21,7 @@ type TimedList[T any] struct {
 	cleanerTicker   *time.Ticker
 	cleanerStopChan chan bool
 	cleanerRunning  bool
+	mtx             *sync.RWMutex
 }
 
 func NewList[T any](cleanupTickTime time.Duration, tickerChan ...<-chan time.Time) *TimedList[T] {
@@ -31,6 +32,7 @@ func NewList[T any](cleanupTickTime time.Duration, tickerChan ...<-chan time.Tim
 				return new(element[T])
 			},
 		},
+		mtx: &sync.RWMutex{},
 	}
 
 	if len(tickerChan) > 0 {
@@ -91,6 +93,8 @@ func (tm *TimedList[T]) Refresh(key int, d time.Duration) error {
 
 // Flush deletes all key-value pairs of the map.
 func (tm *TimedList[T]) Flush() {
+	tm.mtx.Lock()
+	defer tm.mtx.Unlock()
 	for _, value := range tm.container {
 		tm.elementPool.Put(value)
 	}
@@ -171,6 +175,8 @@ func (tm *TimedList[T]) cleanupLoop(tc <-chan time.Time) {
 // expireElement removes the specified key-value element
 // from the map and executes all defined callback functions
 func (tm *TimedList[T]) expireElement(idx int, v *element[T]) {
+	tm.mtx.Lock()
+	defer tm.mtx.Unlock()
 	for _, cb := range v.cbs {
 		if cb == nil {
 			continue
@@ -197,6 +203,8 @@ func (tm *TimedList[T]) cleanUp() {
 // set sets the value for a key and section with the
 // given expiration parameters
 func (tm *TimedList[T]) set(val T, expiresAfter time.Duration, cb ...callback) {
+	tm.mtx.Lock()
+	defer tm.mtx.Unlock()
 	v := tm.elementPool.Get().(*element[T])
 	v.value = val
 	v.expires = time.Now().Add(expiresAfter)
@@ -225,6 +233,8 @@ func (tm *TimedList[T]) get(key int) *element[T] {
 // getRaw returns the raw element object by key,
 // not depending on expiration time
 func (tm *TimedList[T]) getRaw(key int) *element[T] {
+	tm.mtx.RLock()
+	defer tm.mtx.RUnlock()
 	if key >= 0 && key < len(tm.container) {
 		v := tm.container[key]
 		return v
@@ -242,6 +252,8 @@ func (tm *TimedList[T]) remove(key int) {
 	}
 
 	tm.elementPool.Put(v)
+	tm.mtx.Lock()
+	defer tm.mtx.Unlock()
 	tm.container = append(tm.container[:key], tm.container[:key+1]...)
 }
 
@@ -268,6 +280,8 @@ func (tm *TimedList[T]) setExpires(key int, d time.Duration) error {
 }
 
 func (tm *TimedList[T]) getSnapshot() (m []T) {
+	tm.mtx.RLock()
+	defer tm.mtx.RUnlock()
 	m = make([]T, len(tm.container))
 	for _, value := range tm.container {
 		m = append(m, value.value)
