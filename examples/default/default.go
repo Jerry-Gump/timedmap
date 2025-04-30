@@ -11,7 +11,7 @@ func main() {
 
 	// Creates a new timed map which scans for
 	// expired keys every 1 second
-	tm := timedmap.New[int]()
+	tm := timedmap.New[int](time.Second)
 
 	// Add a key "hey" with the value 213, which should
 	// expire after 3 seconds and execute the callback, which

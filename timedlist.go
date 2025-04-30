@@ -13,34 +13,43 @@ import (
 	"time"
 )
 
-var listCleanupTickTime time.Duration
-var listCleanerTicker *time.Ticker
-
 type TimedList[T any] struct {
 	container   []*element[T]
 	elementPool *sync.Pool
 
-	cleanerStopChan chan bool
-	cleanerRunning  bool
-	mtx             *sync.RWMutex
+	cleanupTickcount int64
+	mtx              *sync.RWMutex
 }
 
-func NewList[T any](tickerChan ...<-chan time.Time) *TimedList[T] {
+// 因为牵涉到引用计数的问题，所以实际上runtime.SetFinalizer在这里不起作用，所以需要主动Close
+func (tl *TimedList[T]) finalizer() {
+	__CleanLoop.Remove(tl)
+	tl.Flush()
+}
+
+func (tl *TimedList[T]) Close() {
+	tl.finalizer()
+}
+
+func (tl *TimedList[T]) tickNow(tickcount int64) bool {
+	return tickcount%tl.cleanupTickcount == 0
+}
+
+func NewList[T any](cleanupTime time.Duration) *TimedList[T] {
+	ctc := cleanupTime.Milliseconds() / 100
+	if ctc < 1 {
+		ctc = 1
+	}
 	tm := &TimedList[T]{
-		cleanerStopChan: make(chan bool),
 		elementPool: &sync.Pool{
 			New: func() interface{} {
 				return new(element[T])
 			},
 		},
-		mtx: &sync.RWMutex{},
+		cleanupTickcount: ctc,
+		mtx:              &sync.RWMutex{},
 	}
-
-	if len(tickerChan) > 0 {
-		tm.StartCleanerExternal(tickerChan[0])
-	} else {
-		tm.StartCleanerInternal()
-	}
+	__CleanLoop.Append(tm)
 
 	return tm
 }
@@ -111,69 +120,10 @@ func (tm *TimedList[T]) Size() int {
 	return len(tm.container)
 }
 
-// StartCleanerInternal starts the cleanup loop controlled
-// by an internal ticker with the given interval.
-//
-// If the cleanup loop is already running, it will be
-// stopped and restarted using the new specification.
-func (tm *TimedList[T]) StartCleanerInternal() {
-	if tm.cleanerRunning {
-		tm.StopCleaner()
-	}
-	if listCleanerTicker == nil {
-		listCleanerTicker = time.NewTicker(time.Second)
-	}
-
-	go tm.cleanupLoop(listCleanerTicker.C)
-}
-
-// StartCleanerExternal starts the cleanup loop controlled
-// by the given initiator channel. This is useful if you
-// want to have more control over the cleanup loop or if
-// you want to sync up multiple timedmaps.
-//
-// If the cleanup loop is already running, it will be
-// stopped and restarted using the new specification.
-func (tm *TimedList[T]) StartCleanerExternal(initiator <-chan time.Time) {
-	if tm.cleanerRunning {
-		tm.StopCleaner()
-	}
-	go tm.cleanupLoop(initiator)
-}
-
-// StopCleaner stops the cleaner go routine and timer.
-// This should always be called after exiting a scope
-// where TimedMap is used that the data can be cleaned
-// up correctly.
-func (tm *TimedList[T]) StopCleaner() {
-	if !tm.cleanerRunning {
-		return
-	}
-	tm.cleanerStopChan <- true
-}
-
 // Snapshot returns a new map which represents the
 // current key-value state of the internal container.
 func (tm *TimedList[T]) Snapshot() []T {
 	return tm.getSnapshot()
-}
-
-// cleanupLoop holds the loop executing the cleanup
-// when initiated by tc.
-func (tm *TimedList[T]) cleanupLoop(tc <-chan time.Time) {
-	tm.cleanerRunning = true
-	defer func() {
-		tm.cleanerRunning = false
-	}()
-
-	for {
-		select {
-		case <-tc:
-			tm.cleanUp()
-		case <-tm.cleanerStopChan:
-			return
-		}
-	}
 }
 
 // expireElement removes the specified key-value element
@@ -196,7 +146,6 @@ func (tm *TimedList[T]) expireElement(idx int, v *element[T]) {
 // pairs which expire time after the current time
 func (tm *TimedList[T]) cleanUp() {
 	now := time.Now()
-
 	for key, value := range tm.container {
 		if now.After(value.expires) {
 			tm.expireElement(key, value)
