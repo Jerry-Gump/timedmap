@@ -7,6 +7,8 @@ import (
 
 type callback func(value interface{})
 
+var mapCleanerTicker *time.Ticker
+
 // TimedMap contains a map with all key-value pairs,
 // and a timer, which cleans the map in the set
 // tick durations from expired keys.
@@ -14,8 +16,6 @@ type TimedMap[T any] struct {
 	container   sync.Map
 	elementPool *sync.Pool
 
-	cleanupTickTime time.Duration
-	cleanerTicker   *time.Ticker
 	cleanerStopChan chan bool
 	cleanerRunning  bool
 }
@@ -51,7 +51,7 @@ type element[T any] struct {
 // manually start the cleanup loop. These both methods
 // can also be used to re-define the specification of
 // the cleanup loop when already running if you want to.
-func New[T any](cleanupTickTime time.Duration, tickerChan ...<-chan time.Time) *TimedMap[T] {
+func New[T any](tickerChan ...<-chan time.Time) *TimedMap[T] {
 	tm := &TimedMap[T]{
 		cleanerStopChan: make(chan bool),
 		elementPool: &sync.Pool{
@@ -63,9 +63,8 @@ func New[T any](cleanupTickTime time.Duration, tickerChan ...<-chan time.Time) *
 
 	if len(tickerChan) > 0 {
 		tm.StartCleanerExternal(tickerChan[0])
-	} else if cleanupTickTime > 0 {
-		tm.cleanupTickTime = cleanupTickTime
-		tm.StartCleanerInternal(cleanupTickTime)
+	} else {
+		tm.StartCleanerInternal()
 	}
 
 	return tm
@@ -175,12 +174,14 @@ func (tm *TimedMap[T]) Size() int {
 //
 // If the cleanup loop is already running, it will be
 // stopped and restarted using the new specification.
-func (tm *TimedMap[T]) StartCleanerInternal(interval time.Duration) {
+func (tm *TimedMap[T]) StartCleanerInternal() {
 	if tm.cleanerRunning {
 		tm.StopCleaner()
 	}
-	tm.cleanerTicker = time.NewTicker(interval)
-	go tm.cleanupLoop(tm.cleanerTicker.C)
+	if mapCleanerTicker == nil {
+		mapCleanerTicker = time.NewTicker(time.Second)
+	}
+	go tm.cleanupLoop(mapCleanerTicker.C)
 }
 
 // StartCleanerExternal starts the cleanup loop controlled
@@ -206,9 +207,6 @@ func (tm *TimedMap[T]) StopCleaner() {
 		return
 	}
 	tm.cleanerStopChan <- true
-	if tm.cleanerTicker != nil {
-		tm.cleanerTicker.Stop()
-	}
 }
 
 // Snapshot returns a new map which represents the

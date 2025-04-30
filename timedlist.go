@@ -13,18 +13,19 @@ import (
 	"time"
 )
 
+var listCleanupTickTime time.Duration
+var listCleanerTicker *time.Ticker
+
 type TimedList[T any] struct {
 	container   []*element[T]
 	elementPool *sync.Pool
 
-	cleanupTickTime time.Duration
-	cleanerTicker   *time.Ticker
 	cleanerStopChan chan bool
 	cleanerRunning  bool
 	mtx             *sync.RWMutex
 }
 
-func NewList[T any](cleanupTickTime time.Duration, tickerChan ...<-chan time.Time) *TimedList[T] {
+func NewList[T any](tickerChan ...<-chan time.Time) *TimedList[T] {
 	tm := &TimedList[T]{
 		cleanerStopChan: make(chan bool),
 		elementPool: &sync.Pool{
@@ -37,13 +38,14 @@ func NewList[T any](cleanupTickTime time.Duration, tickerChan ...<-chan time.Tim
 
 	if len(tickerChan) > 0 {
 		tm.StartCleanerExternal(tickerChan[0])
-	} else if cleanupTickTime > 0 {
-		tm.cleanupTickTime = cleanupTickTime
-		tm.StartCleanerInternal(cleanupTickTime)
+	} else {
+		tm.StartCleanerInternal()
 	}
 
 	return tm
-} // Set appends a key-value pair to the map or sets the value of
+}
+
+// Set appends a key-value pair to the map or sets the value of
 // a key. expiresAfter sets the expire time after the key-value pair
 // will automatically be removed from the map.
 func (tm *TimedList[T]) Append(value T, expiresAfter time.Duration, cb ...callback) {
@@ -104,6 +106,8 @@ func (tm *TimedList[T]) Flush() {
 // Size returns the current number of key-value pairs
 // existent in the map.
 func (tm *TimedList[T]) Size() int {
+	tm.mtx.Lock()
+	defer tm.mtx.Unlock()
 	return len(tm.container)
 }
 
@@ -112,12 +116,15 @@ func (tm *TimedList[T]) Size() int {
 //
 // If the cleanup loop is already running, it will be
 // stopped and restarted using the new specification.
-func (tm *TimedList[T]) StartCleanerInternal(interval time.Duration) {
+func (tm *TimedList[T]) StartCleanerInternal() {
 	if tm.cleanerRunning {
 		tm.StopCleaner()
 	}
-	tm.cleanerTicker = time.NewTicker(interval)
-	go tm.cleanupLoop(tm.cleanerTicker.C)
+	if listCleanerTicker == nil {
+		listCleanerTicker = time.NewTicker(time.Second)
+	}
+
+	go tm.cleanupLoop(listCleanerTicker.C)
 }
 
 // StartCleanerExternal starts the cleanup loop controlled
@@ -143,9 +150,6 @@ func (tm *TimedList[T]) StopCleaner() {
 		return
 	}
 	tm.cleanerStopChan <- true
-	if tm.cleanerTicker != nil {
-		tm.cleanerTicker.Stop()
-	}
 }
 
 // Snapshot returns a new map which represents the
@@ -251,9 +255,9 @@ func (tm *TimedList[T]) remove(key int) {
 		return
 	}
 
-	tm.elementPool.Put(v)
 	tm.mtx.Lock()
 	defer tm.mtx.Unlock()
+	tm.elementPool.Put(v)
 	tm.container = append(tm.container[:key], tm.container[:key+1]...)
 }
 
