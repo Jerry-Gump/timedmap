@@ -64,8 +64,8 @@ func (tm *TimedList[T]) Append(value T, expiresAfter time.Duration, cb ...callba
 // GetValue returns an interface of the value of a key in the
 // map. The returned value is nil if there is no value to the
 // passed key or if the value was expired.
-func (tm *TimedList[T]) GetValue(key int) T {
-	v := tm.get(key)
+func (tm *TimedList[T]) GetValue(index int) T {
+	v := tm.get(index)
 	if v == nil {
 		var r T
 		return r
@@ -76,8 +76,8 @@ func (tm *TimedList[T]) GetValue(key int) T {
 // GetExpires returns the expire time of a key-value pair.
 // If the key-value pair does not exist in the map or
 // was expired, this will return an error object.
-func (tm *TimedList[T]) GetExpires(key int) (time.Time, error) {
-	v := tm.get(key)
+func (tm *TimedList[T]) GetExpires(index int) (time.Time, error) {
+	v := tm.get(index)
 	if v == nil {
 		return time.Time{}, ErrKeyNotFound
 	}
@@ -86,20 +86,20 @@ func (tm *TimedList[T]) GetExpires(key int) (time.Time, error) {
 
 // SetExpire is deprecated.
 // Please use SetExpires instead.
-func (tm *TimedList[T]) SetExpire(key int, d time.Duration) error {
-	return tm.setExpires(key, d)
+func (tm *TimedList[T]) SetExpire(index int, d time.Duration) error {
+	return tm.setExpires(index, d)
 }
 
-// Remove deletes a key-value pair in the map.
-func (tm *TimedList[T]) Remove(key int) {
-	tm.remove(key)
+// Remove deletes a value with index of slice.
+func (tm *TimedList[T]) Remove(index int) {
+	tm.remove(index)
 }
 
 // Refresh extends the expire time for a key-value pair
 // about the passed duration. If there is no value to
 // the key passed, this will return an error object.
-func (tm *TimedList[T]) Refresh(key int, d time.Duration) error {
-	return tm.refresh(key, d)
+func (tm *TimedList[T]) Refresh(index int, d time.Duration) error {
+	return tm.refresh(index, d)
 }
 
 // Flush deletes all key-value pairs of the map.
@@ -128,7 +128,7 @@ func (tm *TimedList[T]) Snapshot() []T {
 
 // expireElement removes the specified key-value element
 // from the map and executes all defined callback functions
-func (tm *TimedList[T]) expireElement(idx int, v *element[T]) {
+func (tm *TimedList[T]) expireElement(index int, v *element[T]) {
 	tm.mtx.Lock()
 	defer tm.mtx.Unlock()
 	for _, cb := range v.cbs {
@@ -139,7 +139,7 @@ func (tm *TimedList[T]) expireElement(idx int, v *element[T]) {
 	}
 
 	tm.elementPool.Put(v)
-	tm.container = append(tm.container[:idx], tm.container[:idx+1]...)
+	tm.container = append(tm.container[:index], tm.container[index+1:]...)
 }
 
 // cleanUp iterates trhough the map and expires all key-value
@@ -169,14 +169,14 @@ func (tm *TimedList[T]) set(val T, expiresAfter time.Duration, cb ...callback) {
 
 // get returns an element object by key and section
 // if the value has not already expired
-func (tm *TimedList[T]) get(key int) *element[T] {
-	v := tm.getRaw(key)
+func (tm *TimedList[T]) get(index int) *element[T] {
+	v := tm.getRaw(index)
 	if v == nil {
 		return nil
 	}
 
 	if time.Now().After(v.expires) {
-		tm.expireElement(key, v)
+		tm.expireElement(index, v)
 		return nil
 	}
 
@@ -185,11 +185,11 @@ func (tm *TimedList[T]) get(key int) *element[T] {
 
 // getRaw returns the raw element object by key,
 // not depending on expiration time
-func (tm *TimedList[T]) getRaw(key int) *element[T] {
+func (tm *TimedList[T]) getRaw(index int) *element[T] {
 	tm.mtx.RLock()
 	defer tm.mtx.RUnlock()
-	if key >= 0 && key < len(tm.container) {
-		v := tm.container[key]
+	if index >= 0 && index < len(tm.container) {
+		v := tm.container[index]
 		return v
 	} else {
 		return nil
@@ -198,8 +198,8 @@ func (tm *TimedList[T]) getRaw(key int) *element[T] {
 
 // remove removes an element from the map by giveb
 // key and section
-func (tm *TimedList[T]) remove(key int) {
-	v := tm.getRaw(key)
+func (tm *TimedList[T]) remove(index int) {
+	v := tm.getRaw(index)
 	if v == nil {
 		return
 	}
@@ -207,13 +207,13 @@ func (tm *TimedList[T]) remove(key int) {
 	tm.mtx.Lock()
 	defer tm.mtx.Unlock()
 	tm.elementPool.Put(v)
-	tm.container = append(tm.container[:key], tm.container[:key+1]...)
+	tm.container = append(tm.container[:index], tm.container[index+1:]...)
 }
 
 // refresh extends the lifetime of the given key in the
 // given section by the duration d.
-func (tm *TimedList[T]) refresh(key int, d time.Duration) error {
-	v := tm.get(key)
+func (tm *TimedList[T]) refresh(index int, d time.Duration) error {
+	v := tm.get(index)
 	if v == nil {
 		return ErrKeyNotFound
 	}
@@ -223,8 +223,8 @@ func (tm *TimedList[T]) refresh(key int, d time.Duration) error {
 
 // setExpires sets the lifetime of the given key in the
 // given section to the duration d.
-func (tm *TimedList[T]) setExpires(key int, d time.Duration) error {
-	v := tm.get(key)
+func (tm *TimedList[T]) setExpires(index int, d time.Duration) error {
+	v := tm.get(index)
 	if v == nil {
 		return ErrKeyNotFound
 	}
