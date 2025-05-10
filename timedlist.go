@@ -129,8 +129,9 @@ func (tm *TimedList[T]) Snapshot() []T {
 // expireElement removes the specified key-value element
 // from the map and executes all defined callback functions
 func (tm *TimedList[T]) expireElement(index int, v *element[T]) {
-	tm.mtx.Lock()
-	defer tm.mtx.Unlock()
+	if index < 0 || index >= len(tm.container) || v == nil {
+		return
+	}
 	for _, cb := range v.cbs {
 		if cb == nil {
 			continue
@@ -145,10 +146,12 @@ func (tm *TimedList[T]) expireElement(index int, v *element[T]) {
 // cleanUp iterates trhough the map and expires all key-value
 // pairs which expire time after the current time
 func (tm *TimedList[T]) cleanUp() {
+	tm.mtx.Lock()
+	defer tm.mtx.Unlock()
 	now := time.Now()
-	for key, value := range tm.container {
+	for index, value := range tm.container {
 		if now.After(value.expires) {
-			tm.expireElement(key, value)
+			tm.expireElement(index, value)
 		}
 	}
 }
@@ -175,6 +178,8 @@ func (tm *TimedList[T]) get(index int) *element[T] {
 		return nil
 	}
 
+	tm.mtx.Lock()
+	defer tm.mtx.Unlock()
 	if time.Now().After(v.expires) {
 		tm.expireElement(index, v)
 		return nil
